@@ -3,7 +3,7 @@ from django.views.decorators.csrf import csrf_exempt
 from fuzzywuzzy import fuzz
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from metaphone import doublemetaphone
+import jellyfish
 import re
 from .models import Title, TitleApplication
 from django.utils import timezone
@@ -47,11 +47,11 @@ def cosine_similarity_check(new_title, existing_titles, threshold=0.7):
 
 # Phonetic similarity
 def phonetic_similarity_check(new_title, existing_titles):
-    new_meta = set(doublemetaphone(new_title.lower()))
+    new_soundex = jellyfish.soundex(new_title.lower())
     matches = []
     for title in existing_titles:
-        existing_meta = set(doublemetaphone(title.lower()))
-        if new_meta & existing_meta:
+        existing_soundex = jellyfish.soundex(title.lower())
+        if new_soundex == existing_soundex:
             matches.append(title)
     return matches
 
@@ -177,161 +177,106 @@ def check_similar_meaning(new_title, existing_titles, threshold=80):
 @csrf_exempt
 def submit_title(request):
     if request.method == 'POST':
-        new_title = request.POST.get('title', '')
+        # Check if it's a resubmission
+        original_title = request.POST.get('original_title', None)
+        new_title = request.POST.get('title', '') or request.POST.get('modified_title', '')
+
+        # Normalize the title
         normalized_title = normalize_text(new_title)
-        
+
         # Fetch titles from the database
         db_titles = Title.objects.values_list('title', flat=True)
-        
-        # Also fetch pending applications to check against those too
         pending_titles = TitleApplication.objects.filter(
             status='pending',
             submission_date__gte=timezone.now() - timezone.timedelta(days=90)
         ).values_list('title', flat=True)
-        
         all_titles = list(db_titles) + list(pending_titles)
         normalized_titles = [normalize_text(t) for t in all_titles]
-        
+
         # Initialize results dictionary
         results = {
-            'fuzzy_matches': [],
-            'cosine_matches': [],
-            'phonetic_matches': [],
-            'disallowed_words': [],
+            'fuzzy_matches': fuzzy_match(normalized_title, normalized_titles),
+            'cosine_matches': cosine_similarity_check(normalized_title, normalized_titles),
+            'phonetic_matches': phonetic_similarity_check(normalized_title, normalized_titles),
+            'disallowed_words': check_disallowed_words(new_title),
             'prefix_matches': [],
             'suffix_matches': [],
-            'title_combinations': [],
-            'periodicity_matches': [],
-            'similar_meanings': [],
-            'probability': 100,
-            'reasons': []
+            'title_combinations': check_title_combination(new_title, all_titles),
+            'periodicity_matches': check_periodicity(new_title, all_titles),
+            'similar_meanings': check_similar_meaning(new_title, all_titles),
         }
-        
-        # Run basic similarity checks
-        results['fuzzy_matches'] = fuzzy_match(normalized_title, normalized_titles)
-        results['cosine_matches'] = cosine_similarity_check(normalized_title, normalized_titles)
-        results['phonetic_matches'] = phonetic_similarity_check(normalized_title, normalized_titles)
-        
-        # Run guideline enforcement checks
-        results['disallowed_words'] = check_disallowed_words(new_title)
         prefix_matches, suffix_matches = check_prefix_suffix(new_title, all_titles)
         results['prefix_matches'] = prefix_matches
         results['suffix_matches'] = suffix_matches
-        results['title_combinations'] = check_title_combination(new_title, all_titles)
-        results['periodicity_matches'] = check_periodicity(new_title, all_titles)
-        results['similar_meanings'] = check_similar_meaning(new_title, all_titles)
-        
+
         # Collect rejection reasons
+        reasons = []
         if results['fuzzy_matches']:
-            results['reasons'].append(f"Fuzzy match found with: {', '.join([f'{m[0]} ({m[1]}%)' for m in results['fuzzy_matches']])}")
-        
+            reasons.append(f"Fuzzy match found with: {', '.join([f'{m[0]} ({m[1]}%)' for m in results['fuzzy_matches']])}")
         if results['cosine_matches']:
-            results['reasons'].append(f"Cosine similarity match found with: {', '.join([f'{m[0]} ({m[1]})' for m in results['cosine_matches']])}")
-        
+            reasons.append(f"Cosine similarity match found with: {', '.join([f'{m[0]} ({m[1]})' for m in results['cosine_matches']])}")
         if results['phonetic_matches']:
-            results['reasons'].append(f"Phonetically similar titles found: {', '.join(results['phonetic_matches'])}")
-        
+            reasons.append(f"Phonetically similar titles found: {', '.join(results['phonetic_matches'])}")
         if results['disallowed_words']:
-            results['reasons'].append(f"Contains disallowed words: {', '.join(results['disallowed_words'])}")
-        
+            reasons.append(f"Contains disallowed words: {', '.join(results['disallowed_words'])}")
         if results['prefix_matches']:
-            results['reasons'].append(f"Uses disallowed prefix similar to existing title(s): {', '.join([f'{m[0]} (Prefix: {m[1]}, {m[2]}%)' for m in results['prefix_matches']])}")
-        
+            reasons.append(f"Uses disallowed prefix similar to existing title(s): {', '.join([f'{m[0]} (Prefix: {m[1]}, {m[2]}%)' for m in results['prefix_matches']])}")
         if results['suffix_matches']:
-            results['reasons'].append(f"Uses disallowed suffix similar to existing title(s): {', '.join([f'{m[0]} (Suffix: {m[1]}, {m[2]}%)' for m in results['suffix_matches']])}")
-        
+            reasons.append(f"Uses disallowed suffix similar to existing title(s): {', '.join([f'{m[0]} (Suffix: {m[1]}, {m[2]}%)' for m in results['suffix_matches']])}")
         if results['title_combinations']:
-            results['reasons'].append(f"Appears to be a combination of existing titles: {', '.join([f'{m[0]} + {m[1]} ({m[2]}%)' for m in results['title_combinations']])}")
-        
+            reasons.append(f"Appears to be a combination of existing titles: {', '.join([f'{m[0]} + {m[1]} ({m[2]}%)' for m in results['title_combinations']])}")
         if results['periodicity_matches']:
-            results['reasons'].append(f"Adds periodicity term to existing title: {', '.join([f'{m[0]} + {m[1]} ({m[2]}%)' for m in results['periodicity_matches']])}")
-        
+            reasons.append(f"Adds periodicity term to existing title: {', '.join([f'{m[0]} + {m[1]} ({m[2]}%)' for m in results['periodicity_matches']])}")
         if results['similar_meanings']:
-            results['reasons'].append(f"Has similar meaning to existing title in another language: {', '.join([f'{m[0]} ({m[1]}%)' for m in results['similar_meanings']])}")
-        
-        # Calculate uniqueness score
-        total_checks = 9  # Total number of check types
-        matched_checks = sum(bool(results[key]) for key in 
-        [
-            'fuzzy_matches', 
-            'cosine_matches', 
-            'phonetic_matches', 
-            'disallowed_words',
-            'prefix_matches', 
-            'suffix_matches', 
-            'title_combinations', 
-            'periodicity_matches', 
-            'similar_meanings'
-        ])
-        
-        # Calculate probability as per requirements
-        if matched_checks > 0:
-            # Find highest similarity score
+            reasons.append(f"Has similar meaning to existing title in another language: {', '.join([f'{m[0]} ({m[1]}%)' for m in results['similar_meanings']])}")
+
+        # Determine rejection or acceptance
+        is_rejected = bool(reasons)
+        probability = 100
+        if is_rejected:
             similarity_scores = []
-            
             if results['fuzzy_matches']:
                 similarity_scores.extend([m[1] for m in results['fuzzy_matches']])
-                
             if results['cosine_matches']:
-                similarity_scores.extend([m[1] * 100 for m in results['cosine_matches']])  # Convert to percentage
-                
+                similarity_scores.extend([m[1] * 100 for m in results['cosine_matches']])
             if results['prefix_matches']:
                 similarity_scores.extend([m[2] for m in results['prefix_matches']])
-                
             if results['suffix_matches']:
                 similarity_scores.extend([m[2] for m in results['suffix_matches']])
-                
             if results['title_combinations']:
                 similarity_scores.extend([m[2] for m in results['title_combinations']])
-                
             if results['periodicity_matches']:
                 similarity_scores.extend([m[2] for m in results['periodicity_matches']])
-                
             if results['similar_meanings']:
                 similarity_scores.extend([m[1] for m in results['similar_meanings']])
-            
-            # If we have any similarity scores, use the highest to calculate probability
             if similarity_scores:
                 highest_similarity = max(similarity_scores)
-                results['probability'] = max(0, 100 - highest_similarity)  # As per requirements
-            else:
-                # If we have matches but no scores (e.g., just phonetic matches or disallowed words)
-                results['probability'] = max(0, 100 - (matched_checks / total_checks * 100))
-        
-        # If we have rejection reasons, title is rejected
-        is_rejected = bool(results['reasons'])
-        
-        if is_rejected:
-            # Save application with rejected status
+                probability = max(0, 100 - highest_similarity)
+
+            # Save rejected application
             TitleApplication.objects.create(
                 title=new_title,
                 status='rejected',
-                rejection_reason='; '.join(results['reasons']),
+                rejection_reason='; '.join(reasons),
                 submission_date=timezone.now(),
-                verification_probability=results['probability']
+                verification_probability=probability
             )
-            
-            # Render response with rejection details
             return render(request, 'title_verification/submit_title.html', {
-                'message': '❌ Rejected: ' + ' '.join(results['reasons']),
+                'message': '❌ Rejected: ' + ' '.join(reasons),
                 'title': new_title,
-                'probability': results['probability'],
+                'probability': probability,
                 'results': results,
                 'is_rejected': is_rejected
             })
         else:
-            # Save title if it's unique
+            # Save accepted title
             Title.objects.create(title=new_title)
-            
-            # Also save as an accepted application
             TitleApplication.objects.create(
                 title=new_title,
                 status='accepted',
                 submission_date=timezone.now(),
                 verification_probability=100
             )
-            
-            # Render response with acceptance details
             return render(request, 'title_verification/submit_title.html', {
                 'message': '✅ Title is unique and accepted!',
                 'title': new_title,
@@ -339,22 +284,6 @@ def submit_title(request):
                 'results': {k: [] for k in results.keys()},
                 'is_rejected': is_rejected
             })
-    
+
     # GET request - just render the form
     return render(request, 'title_verification/submit_title.html')
-
-@csrf_exempt
-def modify_and_resubmit(request):
-    if request.method == 'POST':
-        original_title = request.POST.get('original_title', '')
-        modified_title = request.POST.get('modified_title', '')
-        
-        # Handle modified title submission
-        # Here we simply redirect to the submit_title view with the modified title
-        return render(request, 'title_verification/submit_title.html', {
-            'title': modified_title,
-            'original_title': original_title,
-            'is_modification': True
-        })
-    
-    return render(request, 'title_verification/modify_title.html')
