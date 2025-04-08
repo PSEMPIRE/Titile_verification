@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Submit New Title</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Great+Vibes&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #121212;
+            font-family: 'Roboto', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            color: #e0e0e0;
+            padding: 40px 0;
+        }
+        .title {
+            font-family: 'Great Vibes', cursive;
+            font-size: 36px;
+            color: white;
+            position: absolute;
+            left: 20px;
+            top: 20px;
+            letter-spacing: 1px;
+        }
+        .container {
+            background: #1e1e1e;
+            border-radius: 15px;
+            padding: 40px;
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+            margin: 80px auto 20px;
+        }
+        h2 {
+            margin-bottom: 20px;
+            font-size: 24px;
+            color: #ffffff;
+        }
+        label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #3f51b5;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 16px;
+            background: #2c2c2c;
+            color: #ffffff;
+            transition: border-color 0.3s;
+        }
+        input[type="text"]:focus {
+            border-color: #3d85c6;
+            outline: none;
+        }
+        button[type="submit"] {
+            width: 100%;
+            padding: 15px;
+            background: #3f51b5;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: background 0.3s, transform 0.3s;
+        }
+        button[type="submit"]:hover {
+            background: #2e3b8d;
+            transform: translateY(-2px);
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            text-align: left;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+        }
+        .result h3 {
+            margin-top: 0;
+            color: #3f51b5;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        li {
+            margin: 5px 0;
+        }
+        .progress-container {
+            margin-top: 20px;
+            width: 100%;
+            background-color: #2c2c2c;
+            border-radius: 10px;
+            height: 20px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #3f51b5;
+            border-radius: 10px;
+            transition: width 0.5s;
+        }
+        .probability-text {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .modify-form {
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(63, 81, 181, 0.1);
+            border-radius: 10px;
+        }
+        .success {
+            color: #4CAF50;
+        }
+        .error {
+            color: #FF5252;
+        }
+        .badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 20px;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+        .badge-danger {
+            background-color: #FF5252;
+            color: white;
+        }
+        .badge-warning {
+            background-color: #FFC107;
+            color: black;
+        }
+        .badge-info {
+            background-color: #2196F3;
+            color: white;
+        }
+        .tags-container {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="title">Title Verification System</div>
+
+    <div class="container">
+        <h2>Submit a New Title</h2>
+
+        <form method="POST">
+            {% csrf_token %}
+            <label for="title">Title:</label>
+            <input type="text" id="title" name="title" value="{{ title|default:'' }}" required>
+            <button type="submit">Submit</button>
+        </form>
+
+        {% if message %}
+            <div class="result">
+                <h3 {% if 'Rejected' in message %}class="error"{% else %}class="success"{% endif %}>{{ message }}</h3>
+            </div>
+        {% endif %}
+
+        {% if probability %}
+            <div class="result">
+                <h3>Verification Probability:</h3>
+                <p class="probability-text">{{ probability }}%</p>
+                <div class="progress-container">
+                    <div class="progress-bar" style="width: {{ probability }}%"></div>
+                </div>
+            </div>
+        {% endif %}
+
+        {% if is_rejected %}
+            <div class="modify-form">
+                <h3>Modify Title and Try Again</h3>
+                <form method="POST" action="{% url 'modify_and_resubmit' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="original_title" value="{{ title }}">
+                    <label for="modified_title">Modified Title:</label>
+                    <input type="text" id="modified_title" name="modified_title" value="{{ title }}" required>
+                    <button type="submit">Resubmit</button>
+                </form>
+            </div>
+        {% endif %}
+
+        {% if results.fuzzy_matches %}
+            <div class="result">
+                <h3>Fuzzy Matches Found:</h3>
+                <ul>
+                    {% for match, score in results.fuzzy_matches %}
+                        <li>Title: {{ match }} - Score: {{ score }}%</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
+        {% if results.cosine_matches %}
+            <div class="result">
+                <h3>Cosine Similarity Matches Found:</h3>
+                <ul>
+                    {% for match, score in results.cosine_matches %}
+                        <li>Title: {{ match }} - Similarity: {{ score|floatformat:2 }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
+        {% if results.phonetic_matches %}
+            <div class="result">
+                <h3>Phonetic Matches Found:</h3>
+                <ul>
+                    {% for match in results.phonetic_matches %}
+                        <li>{{ match }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
+        {% if results.disallowed_words %}
+            <div class="result">
+                <h3>Disallowed Words Found:</h3>
+                <div class="tags-container">
+                    {% for word in results.disallowed_words %}
+                        <span class="badge badge-danger">{{ word }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+
+        {% if results.prefix_matches %}
+            <div class="result">
+                <h3>Prefix Matches Found:</h3>
+                <ul>
+                    {% for match, prefix, score in results.prefix_matches %}
+                        <li>Title: {{ match }} - Common prefix "{{ prefix }}" - Similarity: {{ score }}%</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
+        {% if results.suffix_matches %}
+            <div class="result">
+                <h3>Suffix Matches Found:</h3>
+                <ul>
+                    {% for match, suffix, score in results.suffix_matches %}
+                        <li>Title: {{ match }} - Common suffix "{{ suffix }}" - Similarity: {{ score }}%</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
+        {% if results.title_combinations %}
+            <div class="result">
+                <h3>Title Combination Matches:</h3>
+                <ul>
+                    {% for title1, title2, score in results.title_combinations %}
+                        <li>Combines existing titles: "{{ title1 }}" + "{{ title2 }}" - Similarity: {{ score }}%</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
+        {% if results.periodicity_matches %}
+            <div class="result">
+                <h3>Periodicity Matches Found:</h3>
+                <ul>
+                    {% for title, term, score in results.periodicity_matches %}
+                        <li>Adds periodicity term "{{ term }}" to existing title "{{ title }}" - Similarity: {{ score }}%</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
+        {% if results.similar_meanings %}
+            <div class="result">
+                <h3>Similar Meanings in Other Languages:</h3>
+                <ul>
+                    {% for title, score in results.similar_meanings %}
+                        <li>Title: {{ title }} - Similarity: {{ score }}%</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>
